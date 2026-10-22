@@ -71,7 +71,10 @@ IX0, IY0, IX1, IY1 = -GAP, -GAP, BW + GAP, BH + GAP
 OX0, OY0, OX1, OY1 = IX0 - WALL, IY0 - WALL, IX1 + WALL, IY1 + WALL
 
 # Openings (case coordinates)
-USB_W, USB_HGT = 12.0, 9.0                   # fits a micro-USB plug's overmold
+# USB opening. The socket sits ~3.3 mm behind the outside of the wall, so the
+# plug's plastic body must fit inside the opening for the plug to seat fully.
+USB_W, USB_HGT = 12.0, 10.0
+USB_LID_NOTCH = 1.2                          # notch in the lid's front edge above it
 SENSOR_Y = fy(SENSOR_K[1])
 SENSOR_W, SENSOR_DEPTH = 7.0, 9.0            # cable notch in the left wall
 BTN_Y = fy(KIT_BOT_K - 4.5)                  # EN/BOOT, ~4.5 mm from USB edge
@@ -179,6 +182,10 @@ def make_lid():
     lid = lid.fuse(lip)
 
     top = H_BASE + LID_T
+    # Notch in the lid's front edge so a USB plug body taller than the base
+    # opening still fits
+    lid = lid.cut(Part.makeBox(USB_W, WALL + FIT + 1.5, USB_LID_NOTCH + 0.1,
+                               V(KIT_CX - USB_W / 2, OY0 - 1, H_BASE - 0.1)))
     # Button access slots (press with a paperclip)
     for dx in (-BTN_DX, BTN_DX):
         lid = lid.cut(slot_y(KIT_CX + dx, BTN_Y, H_BASE - 1, LID_T + 2, 3.0, 6.0))
