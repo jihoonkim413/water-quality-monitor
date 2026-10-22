@@ -96,10 +96,22 @@ All endpoints except `/api/health` need the header `X-API-Key: <your key>`.
 
 Install [PlatformIO](https://platformio.org) (the VS Code extension is easiest), then:
 
-1. Copy `firmware/include/secrets.example.h` to `secrets.h` and fill in WiFi, server URL and API key.
-2. Plug in the board and run `pio run -t upload` in `firmware/`
+1. Copy `firmware/include/secrets.example.h` to `secrets.h` and fill in WiFi, server URL, API key
+   and an `OTA_PASS` of your choice.
+2. Plug in the board and run `pio run -e esp32dev -t upload` in `firmware/`
    (some DevKit V1 boards need the **BOOT** button held when "Connecting..." appears).
 3. Run `pio device monitor` to watch readings every 10 s.
+
+### Updates over WiFi
+
+After the first USB flash, the board accepts new firmware over WiFi:
+
+1. Copy `firmware/local.example.ini` to `local.ini`. Set `upload_port` to `<DEVICE_ID>.local`
+   (or the board's IP) and `--auth=` to the same `OTA_PASS` as in `secrets.h`.
+2. Run `pio run -e ota -t upload` in `firmware/`. It takes about 2–3 minutes, then the board reboots.
+
+If a WiFi update leaves the board unable to reach WiFi (bad credentials, a crash at boot),
+flash it once more over USB. Changing `board_build.partitions` also needs a USB flash.
 
 ## 6. Calibration (in the serial monitor)
 

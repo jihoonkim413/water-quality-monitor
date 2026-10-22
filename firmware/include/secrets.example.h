@@ -6,3 +6,4 @@
 #define SERVER_URL  "http://192.168.1.50:8000"   // home server
 #define API_KEY     "change-me"                  // must match WATER_API_KEY on the server
 #define DEVICE_ID   "kitchen-filter"
+#define OTA_PASS    "change-me-too"              // WiFi firmware updates; must match local.ini

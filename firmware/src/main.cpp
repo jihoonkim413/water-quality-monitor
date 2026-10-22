@@ -7,8 +7,11 @@
 //   flowstart       start counting pulses for flow calibration
 //   flowstop        stop, and save the count as pulses per liter (pour exactly 1 L in between)
 //   ppl <n>         set pulses per liter directly
+//
+// Firmware updates over WiFi: pio run -e ota -t upload (see README.md).
 
 #include <Arduino.h>
+#include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <WiFi.h>
@@ -252,6 +255,25 @@ void handleSerial() {
   }
 }
 
+// ------------------------------------------------------------------- ota --
+// Starts once WiFi is up (mDNS needs a network), then listens for uploads.
+bool otaStarted = false;
+
+void handleOta() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!otaStarted) {
+    ArduinoOTA.setHostname(DEVICE_ID);
+    ArduinoOTA.setPassword(OTA_PASS);
+    ArduinoOTA.onStart([] { Serial.println("ota: update starting"); });
+    ArduinoOTA.onEnd([] { Serial.println("ota: done, rebooting"); });
+    ArduinoOTA.onError([](ota_error_t e) { Serial.printf("ota: error %u\n", e); });
+    ArduinoOTA.begin();
+    otaStarted = true;
+    Serial.printf("ota: ready at %s.local (%s)\n", DEVICE_ID, WiFi.localIP().toString().c_str());
+  }
+  ArduinoOTA.handle();
+}
+
 // ------------------------------------------------------------------ main --
 uint32_t lastSampleMs = 0;
 
@@ -283,6 +305,7 @@ void setup() {
 }
 
 void loop() {
+  handleOta();
   handleSerial();
   drainPulses();
 
