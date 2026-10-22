@@ -219,6 +219,47 @@ def make_reference():
             "RefJST": (jst, (0.95, 0.95, 0.95))}
 
 
+# ---------------------------------------------------------- print files --
+def print_oriented(base, lid):
+    """Both parts sitting on the bed (z = 0): base upright, lid upside down,
+    side by side with a 10 mm gap."""
+    b = base.copy()
+    b.translate(V(-b.BoundBox.XMin, -b.BoundBox.YMin, -b.BoundBox.ZMin))
+    l = lid.copy()
+    l.rotate(V(0, 0, 0), V(1, 0, 0), 180)   # flat top face down on the bed
+    l.translate(V(-l.BoundBox.XMin + b.BoundBox.XMax + 10,
+                  -l.BoundBox.YMin, -l.BoundBox.ZMin))
+    return b, l
+
+
+def export_print_files(doc, base, lid):
+    import Mesh
+    import MeshPart
+
+    def mesh(shape):
+        return Mesh.Mesh(MeshPart.meshFromShape(Shape=shape, LinearDeflection=0.05,
+                                                AngularDeflection=0.2, Relative=False))
+
+    b, l = print_oriented(base, lid)
+    for label, shape in (("base", b), ("lid", l)):
+        m = mesh(shape)
+        bb = m.BoundBox
+        m.translate(-bb.XMin, -bb.YMin, 0)    # each STL on its own at the origin
+        m.write(os.path.join(HERE, f"{label}.stl"))
+
+    # One 3MF with both parts as separate objects, ready for Bambu Studio
+    objs = []
+    for label, shape in (("case_base", b), ("case_lid", l)):
+        o = doc.addObject("Mesh::Feature", label)
+        o.Mesh = mesh(shape)
+        if App.GuiUp:
+            o.ViewObject.Visibility = False
+        objs.append(o)
+    Mesh.export(objs, os.path.join(HERE, "water_case.3mf"))
+    for o in objs:
+        doc.removeObject(o.Name)
+
+
 # ------------------------------------------------------------------- main --
 def build():
     name = "WaterCase"
@@ -241,12 +282,7 @@ def build():
             obj.ViewObject.Transparency = 40
     doc.recompute()
 
-    import MeshPart
-    import Mesh
-    for label, shape in (("base", base), ("lid", lid)):
-        m = MeshPart.meshFromShape(Shape=shape, LinearDeflection=0.05,
-                                   AngularDeflection=0.2, Relative=False)
-        Mesh.Mesh(m).write(os.path.join(HERE, f"{label}.stl"))
+    export_print_files(doc, base, lid)
     doc.saveAs(os.path.join(HERE, "water_case.FCStd"))
 
     print(f"outer {OX1 - OX0:.1f} x {OY1 - OY0:.1f} x {H_BASE + LID_T:.1f} mm "
