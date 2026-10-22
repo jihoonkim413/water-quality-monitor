@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Water Quality</title>
+<style>
+:root {
+  --bg: #f3f6f7; --card: #ffffff; --fg: #17242b; --muted: #637480; --rule: #dfe6ea;
+  --accent: #1f7fb8; --accent-soft: rgba(31,127,184,.14);
+  --ok: #1d9a5b; --warn: #c9821a; --bad: #c8463b;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1518; --card: #172126; --fg: #e3eaee; --muted: #8b9ca6; --rule: #26343b;
+    --accent: #4fb0e8; --accent-soft: rgba(79,176,232,.16);
+    --ok: #3cc47e; --warn: #e3a440; --bad: #ec6a5f;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 900px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+h1 { margin: 0; font-size: 22px; }
+.status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.tile { background: var(--card); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; display: grid; gap: 2px; }
+.tile.primary { grid-column: 1 / -1; }
+.label { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.value { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.tile.primary .value { font-size: 52px; color: var(--accent); }
+.unit { font-size: 15px; font-weight: 500; color: var(--muted); margin-left: 4px; }
+.sub { font-size: 13px; color: var(--muted); }
+.na { color: var(--muted); font-size: 18px; font-weight: 500; }
+
+.chart-card { background: var(--card); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; }
+.controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 13px; padding: 6px 12px; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--rule); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--fg); font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+svg { display: block; width: 100%; height: auto; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.empty { color: var(--muted); font-size: 14px; padding: 40px 0; text-align: center; }
+footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Water Quality</h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+  </header>
+
+  <section class="tiles">
+    <div class="tile primary">
+      <span class="label">TDS</span>
+      <span class="value" id="tds">–</span>
+      <span class="sub" id="tds-sub">&nbsp;</span>
+    </div>
+    <div class="tile">
+      <span class="label">Temperature</span>
+      <span class="value" id="temp">–</span>
+    </div>
+    <div class="tile">
+      <span class="label">Flow</span>
+      <span class="value" id="flow">–</span>
+    </div>
+    <div class="tile">
+      <span class="label" id="used-label">Water used</span>
+      <span class="value" id="used">–</span>
+    </div>
+  </section>
+
+  <section class="chart-card">
+    <div class="controls">
+      <div class="seg" id="metric">
+        <button type="button" data-v="tds_ppm" aria-pressed="true">TDS</button>
+        <button type="button" data-v="temp_c" aria-pressed="false">Temp</button>
+        <button type="button" data-v="flow_lpm" aria-pressed="false">Flow</button>
+      </div>
+      <div class="seg" id="range">
+        <button type="button" data-v="1" aria-pressed="true">1 h</button>
+        <button type="button" data-v="24" aria-pressed="false">24 h</button>
+        <button type="button" data-v="168" aria-pressed="false">7 d</button>
+      </div>
+    </div>
+    <div id="chart"><div class="empty">Loading…</div></div>
+  </section>
+
+  <footer>Updates every 5 seconds. The sensor sends a reading every 10 seconds.</footer>
+</main>
+
+<script>
+const METRICS = {
+  tds_ppm:  { unit: "ppm",   digits: 1 },
+  temp_c:   { unit: "°C",    digits: 1 },
+  flow_lpm: { unit: "L/min", digits: 2 },
+};
+const RANGE_NAMES = { 1: "last hour", 24: "last 24 h", 168: "last 7 days" };
+let metric = "tds_ppm", hours = 1;
+
+const $ = id => document.getElementById(id);
+const fmt = (v, d) => v == null ? null : Number(v).toFixed(d);
+
+function setValue(el, v, unit) {
+  el.innerHTML = v == null ? '<span class="na">not connected</span>'
+                           : `${v}<span class="unit">${unit}</span>`;
+}
+
+function ago(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  return `${Math.round(s / 3600)} h ago`;
+}
+
+function setStatus(kind, text) {
+  $("dot").className = "dot " + kind;
+  $("status").textContent = text;
+}
+
+function tdsNote(ppm) {
+  if (ppm == null) return "";
+  if (ppm < 50) return "Very low: typical of filtered water";
+  if (ppm < 300) return "Typical tap water";
+  if (ppm < 600) return "High";
+  return "Very high";
+}
+
+function drawChart(rows) {
+  const m = METRICS[metric];
+  const pts = rows.filter(r => r[metric] != null)
+                  .map(r => ({ t: Date.parse(r.ts), v: r[metric] }));
+  if (pts.length < 2) {
+    $("chart").innerHTML = `<div class="empty">${metric === "temp_c"
+      ? "No temperature data yet. The temperature wire isn't connected."
+      : "Not enough data for this range yet."}</div>`;
+    return;
+  }
+  const W = 640, H = 240, L = 46, R = 12, T = 12, B = 26;
+  const t0 = Date.now() - hours * 3600e3, t1 = Date.now();
+  let lo = Math.min(...pts.map(p => p.v)), hi = Math.max(...pts.map(p => p.v));
+  if (hi - lo < 1e-9) { lo -= 1; hi += 1; }
+  const pad = (hi - lo) * 0.12; lo -= pad; hi += pad;
+  if (metric !== "temp_c" && lo < 0) lo = 0;
+  const x = t => L + (t - t0) / (t1 - t0) * (W - L - R);
+  const y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+
+  let grid = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = lo + (hi - lo) * i / 4, yy = y(v).toFixed(1);
+    grid += `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="var(--rule)"/>`;
+    grid += `<text x="${L - 6}" y="${yy}" dy="4" text-anchor="end">${v.toFixed(m.digits)}</text>`;
+  }
+  const timeFmt = hours > 24 ? { weekday: "short", hour: "numeric" } : { hour: "numeric", minute: "2-digit" };
+  for (let i = 0; i <= 4; i++) {
+    const t = t0 + (t1 - t0) * i / 4;
+    const anchor = i === 0 ? "start" : i === 4 ? "end" : "middle";
+    grid += `<text x="${x(t).toFixed(1)}" y="${H - 6}" text-anchor="${anchor}">${new Date(t).toLocaleString([], timeFmt)}</text>`;
+  }
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+  const base = (H - B).toFixed(1);
+  const area = `${line}L${x(pts.at(-1).t).toFixed(1)},${base}L${x(pts[0].t).toFixed(1)},${base}Z`;
+  const last = pts.at(-1);
+  $("chart").innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${metric} over the ${RANGE_NAMES[hours]}">
+      ${grid}
+      <path d="${area}" fill="var(--accent-soft)"/>
+      <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="${x(last.t).toFixed(1)}" cy="${y(last.v).toFixed(1)}" r="4" fill="var(--accent)"/>
+    </svg>`;
+}
+
+async function refresh() {
+  try {
+    const [latestRes, seriesRes] = await Promise.all([
+      fetch("/api/readings/latest", { cache: "no-store" }),
+      fetch(`/api/series?hours=${hours}&points=240`, { cache: "no-store" }),
+    ]);
+    const rows = seriesRes.ok ? await seriesRes.json() : [];
+    if (latestRes.status === 404) {
+      setStatus("warn", "Waiting for the first reading");
+    } else if (latestRes.ok) {
+      const r = await latestRes.json();
+      const age = Date.now() - Date.parse(r.ts);
+      if (age < 30e3) setStatus("ok", `Live · updated ${ago(age)}`);
+      else setStatus("warn", `No new data since ${ago(age)}. Is the sensor powered and on WiFi?`);
+      setValue($("tds"), fmt(r.tds_ppm, 1), "ppm");
+      $("tds-sub").textContent = tdsNote(r.tds_ppm);
+      setValue($("temp"), fmt(r.temp_c, 1), "°C");
+      setValue($("flow"), fmt(r.flow_lpm, 2), "L/min");
+    }
+    const used = rows.reduce((s, r) => s + (r.liters || 0), 0);
+    $("used-label").textContent = `Water used, ${RANGE_NAMES[hours]}`;
+    setValue($("used"), used.toFixed(used < 10 ? 2 : 0), "L");
+    drawChart(rows);
+  } catch (e) {
+    setStatus("bad", "Can't reach the server");
+  }
+}
+
+function segment(id, onPick) {
+  $(id).addEventListener("click", e => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    for (const o of $(id).querySelectorAll("button")) o.setAttribute("aria-pressed", o === b);
+    onPick(b.dataset.v);
+    refresh();
+  });
+}
+segment("metric", v => metric = v);
+segment("range", v => hours = Number(v));
+
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

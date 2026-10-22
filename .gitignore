@@ -1,0 +1,12 @@
+firmware/include/secrets.h
+firmware/.pio/
+server/.venv/
+server/*.db
+__pycache__/
+hardware/**/*.rpt
+hardware/**/*-backups/
+hardware/**/*.kicad_prl
+hardware/**/fp-info-cache
+hardware/tools/__pycache__/
+hardware/**/*.FCBak
+hardware/**/~*.lck
