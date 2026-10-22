@@ -10,3 +10,6 @@ hardware/**/fp-info-cache
 hardware/tools/__pycache__/
 hardware/**/*.FCBak
 hardware/**/~*.lck
+
+# Personal blog drafts (kept local)
+docs/blog/
