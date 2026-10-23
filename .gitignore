@@ -17,3 +17,13 @@ firmware/local.ini
 server/.env
 server/data/
 server/nas-bundle/
+
+# Android app
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+android/secrets.properties
+android/.idea/
+*.apk
