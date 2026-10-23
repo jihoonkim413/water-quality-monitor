@@ -1,0 +1,13 @@
+# Synology Container Manager "Project" (or plain `docker compose up -d --build`).
+# Copy this folder to the NAS (e.g. /volume1/docker/water-quality) with a .env
+# file next to it (see .env.example).
+services:
+  water:
+    build: .
+    container_name: water-quality
+    restart: unless-stopped
+    ports:
+      - "8000:8000"      # change the left number if 8000 is taken on the NAS
+    env_file: .env
+    volumes:
+      - ./data:/data     # readings database (water.db) stays here on the NAS

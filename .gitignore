@@ -14,3 +14,6 @@ hardware/**/~*.lck
 # Personal blog drafts (kept local)
 docs/blog/
 firmware/local.ini
+server/.env
+server/data/
+server/nas-bundle/
