@@ -34,7 +34,7 @@ constexpr float R_REF_LO     = 4700.0f;   // ohms, best for tap water
 constexpr float R_REF_HI     = 47000.0f;  // ohms, best for filtered water
 constexpr float RANGE_SWITCH = 14900.0f;  // sqrt(LO * HI): above this, HI is more precise
 constexpr float TEMP_R_FIXED = 10000.0f;  // ohms, 3.3V -> PIN_TEMP
-constexpr float NTC_R25      = 10000.0f;  // thermistor ohms at 25 C (measure yours)
+constexpr float NTC_R25      = 50000.0f;  // thermistor ohms at 25 C (DWS-MH-02 has a 50k NTC)
 constexpr float NTC_BETA     = 3950.0f;
 constexpr float TDS_FACTOR   = 0.5f;      // ppm per uS/cm (common meter convention)
 
@@ -212,6 +212,7 @@ void sendPending() {
 void printStatus() {
   float t = readTempC();
   float ohms = readWaterOhms();
+  Serial.printf("temp pin %u mV | ", analogReadMilliVolts(PIN_TEMP));  // ~0 = shorted, ~3300 = open
   Serial.printf("temp %.2f C | water %.0f ohm (ref %.1fk, fwd %.3f V, rev %.3f V) | TDS %.1f ppm | cellK %.4f | ppl %.1f | wifi %s\n",
                 t, ohms, lastRef / 1000, lastVf, lastVr, tdsPpm(ohms, t), cellK, pulsesPerLiter,
                 WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "down");
