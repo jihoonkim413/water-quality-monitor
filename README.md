@@ -118,15 +118,23 @@ flash it once more over USB. Changing `board_build.partitions` also needs a USB 
 | Command | What to do |
 |---|---|
 | `flowstart` → pour exactly 1 L → `flowstop` | saves pulses per liter |
+| `rs 748` | probe series resistance in ohms (see below); set it before `tds` |
 | `tds 342` | probe in a 342 ppm calibration solution (or any water you measured with a TDS pen; use that number) |
 | `status` | prints temperature, water resistance and TDS now |
 
 Calibration is saved on the ESP32 and survives reboots and reflashing.
 For temperature, compare with a thermometer and adjust `NTC_BETA` (3435 and 3950 are common).
 
-TDS accuracy is roughly ±10% after calibration — good for trends and filter-change alerts.
-If readings sit near 0 or never change, adjust `TDS_R_REF` to be close to the `water ... ohm`
-value `status` prints in your water.
+**Series resistance (`rs`).** The DWS-MH-02 probe reads as the water plus about 750 Ω in series.
+With `rs 0`, a calibration in filtered water makes tap water read about half of what a pen says.
+To measure it for your probe, note the `water ... ohm` value from `status` and a pen reading in
+two or three waters (filtered, tap, and a 50/50 mix), then pick `rs` so that
+`ppm × (ohms − rs)` is about the same for all of them (correct ohms to 25 °C first:
+`ohms × (1 + 0.02 × (temp − 25))`). Our probe: filtered 11.5 ppm / 42.6k, 50/50 335 ppm / 2.24k,
+tap 582 ppm / 1.57k → `rs 748`, within ±2.5% across all three.
+
+TDS accuracy is roughly ±5% after calibration — good for trends and filter-change alerts.
+The firmware picks the 4.7k or 47k reference automatically, so the `ref` in `status` shows which one it used.
 
 ## 7. Phone access
 

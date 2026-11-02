@@ -4,6 +4,7 @@
 // Serial commands (115200 baud):
 //   status          print a reading now
 //   tds <ppm>       calibrate TDS: probe in a solution of known ppm
+//   rs <ohms>       probe series resistance (fit from 2+ waters; set before "tds")
 //   flowstart       start counting pulses for flow calibration
 //   flowstop        stop, and save the count as pulses per liter (pour exactly 1 L in between)
 //   ppl <n>         set pulses per liter directly
@@ -43,6 +44,7 @@ constexpr uint32_t SAMPLE_MS = 10000;
 // ----------------------------------------------------------------- state --
 Preferences prefs;
 float cellK;           // probe cell constant, cm^-1 (set by "tds" calibration)
+float seriesOhms;      // probe resistance not due to the water (set by "rs")
 float pulsesPerLiter;  // set by "flowstop" or "ppl"
 
 portMUX_TYPE pulseMux = portMUX_INITIALIZER_UNLOCKED;
@@ -84,7 +86,9 @@ float lastVf = 0, lastVr = 0, lastRef = R_REF_LO;
 
 // Resistance of the water using one reference resistor. The other reference
 // pin floats so it doesn't load the sense node. Polarity flips every sample so
-// no net DC flows (DC would corrode the electrodes and drift).
+// no net DC flows (DC would corrode the electrodes and drift). Half-cycles are
+// short because longer ones let the electrodes polarize, which reads high in
+// salty water (measured in tap water: 10 us 1365 ohm, 100 us 1475, 500 us 1900).
 float measureOhms(int drivePin, int idlePin, float rRef) {
   constexpr int CYCLES = 32;
   // The ESP32 ADC flattens out below ~0.15 V and above ~3.05 V, so readings
@@ -98,22 +102,21 @@ float measureOhms(int drivePin, int idlePin, float rRef) {
   for (int i = 0; i < CYCLES; i++) {
     digitalWrite(drivePin, HIGH);
     digitalWrite(PIN_TDS_B, LOW);
-    delayMicroseconds(100);
+    delayMicroseconds(10);
     float vf = analogReadMilliVolts(PIN_TDS_SENSE) / 1000.0f;
 
     digitalWrite(drivePin, LOW);
     digitalWrite(PIN_TDS_B, HIGH);
-    delayMicroseconds(100);
+    delayMicroseconds(10);
     float vr = analogReadMilliVolts(PIN_TDS_SENSE) / 1000.0f;
 
-    // forward: VCC -> rRef -> node -> water -> 0V
-    // reverse: VCC -> water -> node -> rRef -> 0V
+    // forward: V -> rRef -> node -> water -> 0V, so vf = V * Rw / (Rw + rRef)
+    // reverse: V -> water -> node -> rRef -> 0V, so vr = V * rRef / (Rw + rRef)
+    // vf / vr = Rw / rRef, whatever the supply voltage or ADC gain.
     sumVf += vf;
     sumVr += vr;
     if (vf > V_MIN && vf < V_MAX && vr > V_MIN && vr < V_MAX) {
-      float rf = rRef * vf / (VCC - vf);
-      float rr = rRef * (VCC - vr) / vr;
-      sum += (rf + rr) / 2;
+      sum += rRef * vf / vr;
       good++;
     }
   }
@@ -142,9 +145,16 @@ float compensation(float tempC) {
   return 1.0f + 0.02f * ((isnan(tempC) ? 25.0f : tempC) - 25.0f);
 }
 
+// The probe reads as the water plus a fixed series resistance. Without removing
+// it, one calibration can't fit both filtered and tap water (tap read 311 ppm
+// vs 582 on a pen after calibrating in filtered water).
+float waterOnlyOhms(float ohms) {
+  return max(ohms - seriesOhms, 1.0f);
+}
+
 float tdsPpm(float ohms, float tempC) {
   if (isinf(ohms)) return 0;
-  float ec = cellK / ohms * 1e6f;  // uS/cm at water temperature
+  float ec = cellK / waterOnlyOhms(ohms) * 1e6f;  // uS/cm at water temperature
   return ec / compensation(tempC) * TDS_FACTOR;
 }
 
@@ -213,8 +223,8 @@ void printStatus() {
   float t = readTempC();
   float ohms = readWaterOhms();
   Serial.printf("temp pin %u mV | ", analogReadMilliVolts(PIN_TEMP));  // ~0 = shorted, ~3300 = open
-  Serial.printf("temp %.2f C | water %.0f ohm (ref %.1fk, fwd %.3f V, rev %.3f V) | TDS %.1f ppm | cellK %.4f | ppl %.1f | wifi %s\n",
-                t, ohms, lastRef / 1000, lastVf, lastVr, tdsPpm(ohms, t), cellK, pulsesPerLiter,
+  Serial.printf("temp %.2f C | water %.0f ohm (ref %.1fk, fwd %.3f V, rev %.3f V) | TDS %.1f ppm | cellK %.4f | rs %.0f | ppl %.1f | wifi %s\n",
+                t, ohms, lastRef / 1000, lastVf, lastVr, tdsPpm(ohms, t), cellK, seriesOhms, pulsesPerLiter,
                 WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "down");
 }
 
@@ -230,9 +240,15 @@ void handleSerial() {
     float t = readTempC();
     float ohms = readWaterOhms();
     if (ppm <= 0 || isinf(ohms)) { Serial.println("need probe in solution and ppm > 0"); return; }
-    cellK = ppm / TDS_FACTOR * compensation(t) * ohms / 1e6f;
+    cellK = ppm / TDS_FACTOR * compensation(t) * waterOnlyOhms(ohms) / 1e6f;
     prefs.putFloat("cellK", cellK);
     Serial.printf("saved cellK = %.4f\n", cellK);
+  } else if (line.startsWith("rs ")) {
+    float v = line.substring(3).toFloat();
+    if (v < 0) { Serial.println("rs must be >= 0"); return; }
+    seriesOhms = v;
+    prefs.putFloat("rs", seriesOhms);
+    Serial.printf("saved rs = %.0f ohm; now redo tds <ppm>\n", seriesOhms);
   } else if (line == "flowstart") {
     drainPulses();
     calPulses = 0;
@@ -252,7 +268,7 @@ void handleSerial() {
     prefs.putFloat("ppl", pulsesPerLiter);
     Serial.printf("saved pulses per liter = %.1f\n", pulsesPerLiter);
   } else if (line.length()) {
-    Serial.println("commands: status | tds <ppm> | flowstart | flowstop | ppl <n>");
+    Serial.println("commands: status | tds <ppm> | rs <ohms> | flowstart | flowstop | ppl <n>");
   }
 }
 
@@ -283,6 +299,7 @@ void setup() {
 
   prefs.begin("water", false);
   cellK = prefs.getFloat("cellK", 1.0f);
+  seriesOhms = prefs.getFloat("rs", 0.0f);
   pulsesPerLiter = prefs.getFloat("ppl", 450.0f);  // placeholder until calibrated
 
   pinMode(PIN_TDS_LO, OUTPUT);
