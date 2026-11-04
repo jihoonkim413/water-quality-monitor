@@ -113,7 +113,15 @@ After the first USB flash, the board accepts new firmware over WiFi:
 If a WiFi update leaves the board unable to reach WiFi (bad credentials, a crash at boot),
 flash it once more over USB. Changing `board_build.partitions` also needs a USB flash.
 
-## 6. Calibration (in the serial monitor)
+## 6. Calibration
+
+Type these in the serial monitor (USB, 115200 baud), or over WiFi once the board is on the network:
+
+```
+nc kitchen-filter.local 23     # your DEVICE_ID, or the board's IP
+```
+
+Send your `OTA_PASS` as the first line, then any command below. `bye` disconnects.
 
 | Command | What to do |
 |---|---|
@@ -123,6 +131,8 @@ flash it once more over USB. Changing `board_build.partitions` also needs a USB 
 | `status` | prints temperature, water resistance and TDS now |
 
 Calibration is saved on the ESP32 and survives reboots and reflashing.
+`tds` refuses to run if the temperature reading is missing or outside 1–45 °C, because the
+temperature at calibration time is built into every later TDS value. Fix the temperature first.
 For temperature, compare with a thermometer and adjust `NTC_BETA` (3435 and 3950 are common).
 
 **Series resistance (`rs`).** The DWS-MH-02 probe reads as the water plus about 750 Ω in series.

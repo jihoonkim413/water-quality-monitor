@@ -1,13 +1,16 @@
 // ESP32 DevKit V1 + DWS-MH-02 water sensor (flow, temperature, TDS).
 // Sends a reading every SAMPLE_MS to the home server. See README.md for wiring.
 //
-// Serial commands (115200 baud):
+// Commands, over USB serial (115200 baud) or WiFi (nc <DEVICE_ID>.local 23,
+// then send OTA_PASS as the first line):
 //   status          print a reading now
 //   tds <ppm>       calibrate TDS: probe in a solution of known ppm
 //   rs <ohms>       probe series resistance (fit from 2+ waters; set before "tds")
 //   flowstart       start counting pulses for flow calibration
 //   flowstop        stop, and save the count as pulses per liter (pour exactly 1 L in between)
 //   ppl <n>         set pulses per liter directly
+//
+//   bye             close the WiFi console
 //
 // Firmware updates over WiFi: pio run -e ota -t upload (see README.md).
 
@@ -219,56 +222,116 @@ void sendPending() {
 }
 
 // ---------------------------------------------------------------- serial --
-void printStatus() {
+void printStatus(Print& out) {
   float t = readTempC();
   float ohms = readWaterOhms();
-  Serial.printf("temp pin %u mV | ", analogReadMilliVolts(PIN_TEMP));  // ~0 = shorted, ~3300 = open
-  Serial.printf("temp %.2f C | water %.0f ohm (ref %.1fk, fwd %.3f V, rev %.3f V) | TDS %.1f ppm | cellK %.4f | rs %.0f | ppl %.1f | wifi %s\n",
+  out.printf("temp pin %u mV | ", analogReadMilliVolts(PIN_TEMP));  // ~0 = shorted, ~3300 = open
+  out.printf("temp %.2f C | water %.0f ohm (ref %.1fk, fwd %.3f V, rev %.3f V) | TDS %.1f ppm | cellK %.4f | rs %.0f | ppl %.1f | wifi %s\n",
                 t, ohms, lastRef / 1000, lastVf, lastVr, tdsPpm(ohms, t), cellK, seriesOhms, pulsesPerLiter,
                 WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "down");
 }
 
-void handleSerial() {
-  if (!Serial.available()) return;
-  String line = Serial.readStringUntil('\n');
+// Runs one command line from USB serial or the WiFi console; replies go to out.
+void handleCommand(String line, Print& out) {
   line.trim();
 
   if (line == "status") {
-    printStatus();
+    printStatus(out);
   } else if (line.startsWith("tds ")) {
     float ppm = line.substring(4).toFloat();
     float t = readTempC();
     float ohms = readWaterOhms();
-    if (ppm <= 0 || isinf(ohms)) { Serial.println("need probe in solution and ppm > 0"); return; }
+    if (ppm <= 0 || isinf(ohms)) { out.println("need probe in solution and ppm > 0"); return; }
+    // The temperature at calibration is baked into cellK, so a bad reading
+    // here would skew every later TDS value.
+    if (isnan(t) || t < 1.0f || t > 45.0f) {
+      out.printf("temperature reads %.1f C - fix the sensor before calibrating\n", t);
+      return;
+    }
     cellK = ppm / TDS_FACTOR * compensation(t) * waterOnlyOhms(ohms) / 1e6f;
     prefs.putFloat("cellK", cellK);
-    Serial.printf("saved cellK = %.4f\n", cellK);
+    out.printf("saved cellK = %.4f (at %.1f C, %.0f ohm)\n", cellK, t, ohms);
   } else if (line.startsWith("rs ")) {
     float v = line.substring(3).toFloat();
-    if (v < 0) { Serial.println("rs must be >= 0"); return; }
+    if (v < 0) { out.println("rs must be >= 0"); return; }
     seriesOhms = v;
     prefs.putFloat("rs", seriesOhms);
-    Serial.printf("saved rs = %.0f ohm; now redo tds <ppm>\n", seriesOhms);
+    out.printf("saved rs = %.0f ohm; now redo tds <ppm>\n", seriesOhms);
   } else if (line == "flowstart") {
     drainPulses();
     calPulses = 0;
     calibratingFlow = true;
-    Serial.println("pour exactly 1 L, then type flowstop");
+    out.println("pour exactly 1 L, then type flowstop");
   } else if (line == "flowstop" && calibratingFlow) {
     drainPulses();
     calibratingFlow = false;
-    if (calPulses == 0) { Serial.println("no pulses seen - check wiring"); return; }
+    if (calPulses == 0) { out.println("no pulses seen - check wiring"); return; }
     pulsesPerLiter = calPulses;
     prefs.putFloat("ppl", pulsesPerLiter);
-    Serial.printf("saved pulses per liter = %u\n", (unsigned)calPulses);
+    out.printf("saved pulses per liter = %u\n", (unsigned)calPulses);
   } else if (line.startsWith("ppl ")) {
     float v = line.substring(4).toFloat();
-    if (v <= 0) { Serial.println("ppl must be > 0"); return; }
+    if (v <= 0) { out.println("ppl must be > 0"); return; }
     pulsesPerLiter = v;
     prefs.putFloat("ppl", pulsesPerLiter);
-    Serial.printf("saved pulses per liter = %.1f\n", pulsesPerLiter);
+    out.printf("saved pulses per liter = %.1f\n", pulsesPerLiter);
   } else if (line.length()) {
-    Serial.println("commands: status | tds <ppm> | rs <ohms> | flowstart | flowstop | ppl <n>");
+    out.println("commands: status | tds <ppm> | rs <ohms> | flowstart | flowstop | ppl <n> | bye");
+  }
+}
+
+void handleSerial() {
+  if (!Serial.available()) return;
+  handleCommand(Serial.readStringUntil('\n'), Serial);
+}
+
+// ----------------------------------------------------------- wifi console --
+// One client at a time on port 23. The first line must be OTA_PASS.
+WiFiServer consoleServer(23);
+WiFiClient console;
+String consoleLine;
+bool consoleAuthed = false;
+bool consoleStarted = false;
+
+void handleConsole() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!consoleStarted) {
+    consoleServer.begin();
+    consoleStarted = true;
+  }
+  if (consoleServer.hasClient()) {
+    if (console.connected()) console.stop();  // newest client wins
+    console = consoleServer.available();
+    consoleLine = "";
+    consoleAuthed = false;
+    console.print("password: ");
+  }
+  if (!console.connected()) return;
+
+  while (console.available()) {
+    char c = console.read();
+    if (c != '\n') {
+      if (c >= 32 && c < 127 && consoleLine.length() < 64) consoleLine += c;  // skip telnet control bytes
+      continue;
+    }
+    String line = consoleLine;
+    consoleLine = "";
+    line.trim();
+    if (!consoleAuthed) {
+      if (line == OTA_PASS) {
+        consoleAuthed = true;
+        console.println("ok; type 'status'");
+      } else {
+        console.println("wrong password");
+        console.stop();
+        return;
+      }
+    } else if (line == "bye") {
+      console.stop();
+      return;
+    } else {
+      handleCommand(line, console);
+    }
   }
 }
 
@@ -325,6 +388,7 @@ void setup() {
 void loop() {
   handleOta();
   handleSerial();
+  handleConsole();
   drainPulses();
 
   uint32_t now = millis();
